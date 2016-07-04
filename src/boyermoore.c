@@ -5,22 +5,22 @@
 typedef struct BoyerMooreMatcher {
     const gchar *pat;
     guint16 patlen;
-    guint16 delta1[G_MAXUINT8];
-    guint16 *delta2;
+    guint16 bcshifts[G_MAXUINT8];
+    guint16 *gsshifts;
 } BoyerMooreMatcher;
 
 static void
 BoyerMooreMatcher_buildShiftLengthTable(BoyerMooreMatcher *self) {
     // bad character rule に基づいて計算
-    for (int i = 0; i < G_MAXUINT8; ++i) {
-        self->delta1[i] = self->patlen;
+    for (int i = 0; i < G_N_ELEMENTS(self->bcshifts); ++i) {
+        self->bcshifts[i] = self->patlen;
     }
     for (int i = 0; i < self->patlen; ++i) {
-        self->delta1[(guint16) self->pat[i]] = self->patlen - i - 1;
+        self->bcshifts[(guchar) self->pat[i]] = self->patlen - i - 1;
     }
 
     // good suffix rule に基づいて計算
-    self->delta2[self->patlen - 1] = 1;
+    self->gsshifts[self->patlen - 1] = 1;
     int matchidx = self->patlen - 1;
     for (int i = self->patlen - 2; i >= 0; --i) {
         // プレフィクスとサフィックスの一致を確認
@@ -28,7 +28,7 @@ BoyerMooreMatcher_buildShiftLengthTable(BoyerMooreMatcher *self) {
             strncmp(self->pat, self->pat + i + 1, self->patlen - (i + 1)) == 0) {
             matchidx = i;
         }
-        self->delta2[i] = self->patlen + matchidx - i;
+        self->gsshifts[i] = self->patlen + matchidx - i;
 
         for (int j = i; j >= 0; --j) {
             // 部分文字列とサフィックスの一致を確認
@@ -39,7 +39,7 @@ BoyerMooreMatcher_buildShiftLengthTable(BoyerMooreMatcher *self) {
             if (self->pat[i] == self->pat[j]) {
                 continue;
             }
-            self->delta2[i] = self->patlen - j - 1;
+            self->gsshifts[i] = self->patlen - j - 1;
             break;
         }
     }
@@ -51,9 +51,9 @@ BoyerMooreMatcher_new(const gchar *pat) {
     memset(self, 0, sizeof(BoyerMooreMatcher));
     self->pat = pat;
     self->patlen = strlen(pat);
-    memset(self->delta1, 0, sizeof(self->delta1));
-    self->delta2 = g_malloc(sizeof(guint16) * self->patlen);
-    memset(self->delta2, 0, sizeof(sizeof(guint16) * self->patlen));
+    memset(self->bcshifts, 0, sizeof(self->bcshifts));
+    self->gsshifts = g_malloc(sizeof(guint16) * self->patlen);
+    memset(self->gsshifts, 0, sizeof(sizeof(guint16) * self->patlen));
     BoyerMooreMatcher_buildShiftLengthTable(self);
     return self;
 }
@@ -63,7 +63,7 @@ BoyerMooreMatcher_free(BoyerMooreMatcher *self) {
     if (self == NULL) {
         return;
     }
-    g_free(self->delta2);
+    g_free(self->gsshifts);
     g_free(self);
 }
 
@@ -71,68 +71,38 @@ void
 BoyerMooreMatcher_updatePattern(BoyerMooreMatcher *self, const gchar *pat) {
     self->pat = pat;
     self->patlen = strlen(pat);
-    memset(self->delta1, 0, sizeof(self->delta1));
-    self->delta2 = g_realloc(self->delta2, sizeof(guint16) * self->patlen);
-    memset(self->delta2, 0, sizeof(sizeof(guint16) * self->patlen));
+    memset(self->bcshifts, 0, sizeof(self->bcshifts));
+    self->gsshifts = g_realloc(self->gsshifts, sizeof(guint16) * self->patlen);
+    memset(self->gsshifts, 0, sizeof(sizeof(guint16) * self->patlen));
     BoyerMooreMatcher_buildShiftLengthTable(self);
 }
 
 gboolean
-BoyerMooreMatcher_scan(BoyerMooreMatcher *self, const gchar *string, gboolean verbose) {
-    if (verbose) {
-        printf("== START SEARCHING ==\n");
-        printf("pat: %s\n", self->pat);
-        printf("string: %s\n\n", string);
-    }
-
+BoyerMooreMatcher_scan(BoyerMooreMatcher *self, const gchar *string) {
     int totalshift = 0;
     int patlen = self->patlen;
     int stringlen = strlen(string);
-    int count = 0;
-    long shiftall = 0L;
     while (TRUE) {
         if (totalshift + patlen > stringlen) {
             break;
         }
-
-        if (verbose) {
-            printf("== TEST ==\n");
-            printf("%s\n", string);
-            for (int i = 0; i <totalshift; ++i) {
-                printf(" ");
-            }
-            printf("%s\n\n", self->pat);
-        }
-
         /* check matching */
         gboolean match = TRUE;
         int j;
         for (j = patlen - 1; j >= 0; --j) {
-            ++count;
             if (string[totalshift + j] != self->pat[j]) {
                 match = FALSE;
                 break;
             }
         }
         if (match) {
-            if (verbose) {
-                printf("== FINISH SEARCHING ==\n");
-                printf("result: MATCH (shift: %d)\n\n", totalshift);
-            }
             return TRUE;
         } else {
-            guint16 key = *(string + totalshift + j);
-            int shift = j + 1 - patlen + MAX(self->delta1[key], self->delta2[j]);
+            gchar key = *(string + totalshift + j);
+            int shift = j + 1 - patlen + MAX(self->bcshifts[(guchar) key], self->gsshifts[j]);
             shift = MAX(shift, 1);
-            shiftall += shift;
             totalshift += shift;
         }
-    }
-    //printf("count: %d, shiftall: %ld\n", count, shiftall);
-
-    if (verbose) {
-        printf("== FINISH SEARCHING ==\n");
-        printf("result: NOT MATCH \n\n");
     }
     return FALSE;
 }
