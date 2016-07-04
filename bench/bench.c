@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <glib.h>
 
@@ -9,6 +10,7 @@
 #include "../src/commentzwalter.h"
 #include "../src/commentzwalterunicode.h"
 #include "../src/naiveunicode.h"
+#include "../src/sunday.h"
 
 // 大文字小文字は区別しない、正規化しない
 // サンプルデータは UTF-8 である必要がある
@@ -30,13 +32,15 @@ static void bench_cw(const char *document, const char *keywords, size_t n_keywor
 static void bench_cw_unicode(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
 static void bench_bm(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
 static void bench_bm_unicode(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
+static void bench_sunday(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
 static void bench_naive_unicode(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
 static void bench_naive_unicode_with_simd(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits);
 
 static struct bench_entry_t bench_entries[] = {
         {"Aho-Corasick   ", bench_ac_unicode},
         {"Commentz-Walter", bench_cw_unicode},
-        {"Boyer-Moore    ", bench_bm_unicode},
+        {"Boyer-Moore    ", bench_bm},
+        {"Sunday         ", bench_sunday},
         {"naive          ", bench_naive_unicode},
         {NULL, NULL},
 };
@@ -180,6 +184,34 @@ bench_bm_unicode(const char *document, const char *keywords, size_t n_keywords, 
         UnicodeBoyerMooreMatcher_free(matcher);
         g_free(keyword_as_u16);
     }
+}
+
+static void
+bench_sunday(const char *document, const char *keywords, size_t n_keywords, size_t n_scanning, double *build_time, long *n_hits)
+{
+    struct timeval tv_before;
+    struct timeval tv_after;
+    gsize documentlen = strlen(document);
+    const char *keyword = keywords;
+    const char *keyword_end = keywords + KEYWORD_ALLOC_SIZE * n_keywords;
+    SundayMatcher *matcher = SundayMatcher_new("dummy", -1L);
+    for (; keyword_end != keyword; keyword += KEYWORD_ALLOC_SIZE ) {
+        g_assert(0 == gettimeofday(&tv_before, NULL));
+        SundayMatcher_reinit(matcher, keyword, -1L);
+        g_assert(0 == gettimeofday(&tv_after, NULL));
+        if (NULL != build_time) {
+            *build_time += tv_after.tv_sec - tv_before.tv_sec;
+            *build_time += (tv_after.tv_usec -tv_before.tv_usec) * 0.000001;
+        }
+        for (int j=0; j<n_scanning; ++j) {
+            if (SundayMatcher_scan(matcher, document, documentlen)) {
+                if (NULL != n_hits) {
+                    ++(*n_hits);
+                }
+            }
+        }
+    }
+    SundayMatcher_free(matcher);
 }
 
 static void
